@@ -12,6 +12,14 @@ from qiskit.dagcircuit import DAGOpNode
 StandardGateCommutations = pickle.load(open("standard_gates_commutations.p", "rb"))
 
 
+def get_relative_placement(gate0, gate1):
+    #for i, q in sorted(gate0.qubits):
+    #   dic_g0[i] = q
+    # for i, q in sorted(gate1.qubits):
+    #   dic_g1[q] = i
+    return [dic_g1.get(dic_g0[i], None) for i in dic_g0.keys()]
+
+
 class CommutationLibrary:
     """A library containing commutation relationships of non-parameterized standard gates."""
 
@@ -45,7 +53,7 @@ class CommutationLibrary:
         if not self.is_gate_in_library(gate1):
             return None
 
-        relative_placement = None
+        relative_placement = get_relative_placement(gate0, gate1)
         return self._standard_commutations[gate0][gate1][relative_placement]
 
     def do_gates_commute(self, gate0: Union[DAGOpNode, Instruction], gate1: Union[DAGOpNode, Instruction]):
@@ -55,16 +63,17 @@ class CommutationLibrary:
         if set(g0.qargs).isdisjoint(g1.qargs):
             return True
 
-        # TODO check for conditional/classical operations?
+        #TODO check for conditional/classical operations?
         stored_commutation = self.get_stored_commutation_relation(g0, g1)
 
         if stored_commutation is not None:
             return stored_commutation
 
-        # TODO Compute commutation via matrix multiplication
+        # Compute commutation via matrix multiplication
         is_commuting = _commute(g0, g1)
-        # TODO Store result in this session's commutation_library
-
+        # Store result in this session's commutation_library
+        self._standard_commutations[type(g0)][type(g1)][get_relative_placement(g0, g1)] = is_commuting
+        self._standard_commutations[type(g1)][type(g0)][get_relative_placement(g1, g0)] = is_commuting
 
 def _commute(node1, node2):
     """Function to verify commutation relation between two nodes in the DAG.
