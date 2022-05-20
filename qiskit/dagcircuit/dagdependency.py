@@ -21,6 +21,7 @@ import warnings
 import numpy as np
 import retworkx as rx
 
+from qiskit.circuit.commutation_library import SessionCommutationLibrary
 from qiskit.circuit.quantumregister import QuantumRegister, Qubit
 from qiskit.circuit.classicalregister import ClassicalRegister, Clbit
 from qiskit.dagcircuit.exceptions import DAGDependencyError
@@ -577,7 +578,8 @@ def _does_commute(node1, node2):
     Return:
         bool: True if the nodes commute and false if it is not the case.
     """
-
+    return SessionCommutationLibrary.do_gates_commute(node1, node2)
+    """
     # Create set of qubits on which the operation acts
     qarg1 = [node1.qargs[i] for i in range(0, len(node1.qargs))]
     qarg2 = [node2.qargs[i] for i in range(0, len(node2.qargs))]
@@ -631,3 +633,4 @@ def _does_commute(node1, node2):
     op21 = Operator._einsum_matmul(op, op2, qarg2, shift=qbit_num, right_mul=True)
 
     return np.allclose(op12, op21)
+    """

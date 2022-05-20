@@ -1,23 +1,30 @@
 """Gate Commutation Library."""
-
+import os
 import pickle
-
-from qiskit.quantum_info import Operator
-
-from qiskit.circuit import Instruction
 from typing import Union
 import numpy as np
+
+from qiskit.quantum_info import Operator
 from qiskit.dagcircuit import DAGOpNode
 
-StandardGateCommutations = pickle.load(open("standard_gates_commutations.p", "rb"))
+dirname = os.path.dirname(__file__)
+
+StandardGateCommutations = pickle.load(open(dirname + "/standard_gates_commutations.p", "rb"))
 
 
-def get_relative_placement(gate0, gate1):
-    #for i, q in sorted(gate0.qubits):
-    #   dic_g0[i] = q
-    # for i, q in sorted(gate1.qubits):
-    #   dic_g1[q] = i
-    return [dic_g1.get(dic_g0[i], None) for i in dic_g0.keys()]
+def _get_relative_placement(gate0: DAGOpNode, gate1: DAGOpNode) -> tuple:
+    """Determines the relative placement of two gates. Note: this is NOT symmetric.
+
+    Args:
+        gate0 (DAGOpNode): first gate
+        gate1 (DAGOpNode): second gate
+
+    Return:
+        A list that describes the placement of gate1 with respect to gate0.
+        E.g. _get_relative_placement(CX(0, 1), CX(1, 2)) would return [None, 0]
+    """
+    qubits_g1 = {q: i for i, q in enumerate(gate1.qargs)}
+    return tuple(qubits_g1.get(q, None) for i, q in enumerate(gate0.qargs))
 
 
 class CommutationLibrary:
@@ -26,56 +33,78 @@ class CommutationLibrary:
     def __init__(self):
         self._standard_commutations = StandardGateCommutations
 
-    def is_gate_in_library(self, gate: Union[DAGOpNode, Instruction]):
-        """ Checks whether a gate is part of the commutation library.
+    def is_op_in_library(self, gate0: DAGOpNode, gate1: DAGOpNode) -> bool:
+        """Checks whether a gate is part of the commutation library.
 
         Args:
-            gate (DAGOpNode or Gate): Gate to be checked.
+            gate0 (DAGOpNode): Gate to be checked.
+            gate1 (DAGOpNode): Gate to be checked.
 
         Return:
-            true if gate is in commutation library, false otherwise
-
-        Raises:
-            TypeError if gate parameter is not a DAGOpNode or Gate
-
+            bool: True if gate is in commutation library, false otherwise
         """
-        if isinstance(gate, DAGOpNode):
-            return type(gate.op) in self._standard_commutations
-        elif isinstance(gate, Instruction):
-            return type(gate) in self._standard_commutations
-        else:
-            raise TypeError("Expected a DAGOpNode or Gate object")
+        return (type(gate0.op), type(gate1.op)) in self._standard_commutations[type(gate0.op)]
 
-    def get_stored_commutation_relation(self, gate0: Instruction, gate1: Instruction):
-        if not self.is_gate_in_library(gate0):
+    def get_stored_commutation_relation(self, op0: DAGOpNode, op1: DAGOpNode) -> Union[bool, None]:
+        """Returns stored commutation relation if any
+
+        Args:
+            op0 (DAGOpNode): a gate whose commutation should be checked
+            op1 (DAGOpNode): a gate whose commutation should be checked
+
+        Return:
+            bool: True if the gates commute and false if it is not the case.
+        """
+        relative_placement = _get_relative_placement(op0, op1)
+        op0op1 = self._standard_commutations.get((type(op0.op), type(op1.op)), None)
+        if op0op1 is None:
             return None
 
-        if not self.is_gate_in_library(gate1):
-            return None
+        if isinstance(op0op1, bool):
+            return op0op1
 
-        relative_placement = get_relative_placement(gate0, gate1)
-        return self._standard_commutations[gate0][gate1][relative_placement]
+        return op0op1.get(relative_placement, None)
 
-    def do_gates_commute(self, gate0: Union[DAGOpNode, Instruction], gate1: Union[DAGOpNode, Instruction]):
-        g0 = DAGOpNode.op if isinstance(gate0, DAGOpNode) else gate0
-        g1 = DAGOpNode.op if isinstance(gate1, DAGOpNode) else gate1
+    def do_gates_commute(self, op0: DAGOpNode, op1: DAGOpNode, cache: bool = True) -> bool:
+        """Determines the commutation relation between op0 and op1 by trying to loop up their relation in the
+        commutation library or computing the relation explicitly using matrix multiplication
 
-        if set(g0.qargs).isdisjoint(g1.qargs):
+        Args:
+            op0 (DAGOpNode): a gate whose commutation should be checked
+            op1 (DAGOpNode): a gate whose commutation should be checked
+            cache (bool): whether to store new commutation relations in the commutation library
+
+        Return:
+            bool: True if the gates commute and false if it is not the case.
+        """
+        if set(op0.qargs).isdisjoint(op1.qargs):
             return True
 
-        #TODO check for conditional/classical operations?
-        stored_commutation = self.get_stored_commutation_relation(g0, g1)
+        # pylint: disable=unidiomatic-typecheck
+        if op0.qargs == op1.qargs and type(op0.op) == type(op1.op):
+            return True
+
+        stored_commutation = self.get_stored_commutation_relation(op0, op1)
 
         if stored_commutation is not None:
+            # TODO if op0 or op1 has params, evaluate stored_commutation
             return stored_commutation
 
         # Compute commutation via matrix multiplication
-        is_commuting = _commute(g0, g1)
-        # Store result in this session's commutation_library
-        self._standard_commutations[type(g0)][type(g1)][get_relative_placement(g0, g1)] = is_commuting
-        self._standard_commutations[type(g1)][type(g0)][get_relative_placement(g1, g0)] = is_commuting
+        is_commuting = _commute(op0, op1)
 
-def _commute(node1, node2):
+        # TODO add a LRU cache
+        if cache:
+            # Store result in this session's commutation_library
+            self._standard_commutations.setdefault((type(op0.op), type(op1.op)), {})[
+                _get_relative_placement(op0, op1)
+            ] = is_commuting
+            self._standard_commutations.setdefault((type(op1.op), type(op0.op)), {})[
+                _get_relative_placement(op1, op0)
+            ] = is_commuting
+
+
+def _commute(node1: DAGOpNode, node2: DAGOpNode) -> bool:
     """Function to verify commutation relation between two nodes in the DAG.
 
     Args:
@@ -98,10 +127,9 @@ def _commute(node1, node2):
     # if and only if the qubits are different.
     # TODO: qubits can be the same if conditions are identical and
     # the non-conditional gates commute.
-    if node1.type == "op" and node2.type == "op":
-        if node1.op.condition or node2.op.condition:
-            intersection = set(qarg1).intersection(set(qarg2))
-            return not intersection
+    if node1.op.condition or node2.op.condition:
+        intersection = set(qarg1).intersection(set(qarg2))
+        return not intersection
 
     # Commutation for non-unitary or parameterized or opaque ops
     # (e.g. measure, reset, directives or pulse gates)
@@ -139,4 +167,3 @@ def _commute(node1, node2):
     op21 = Operator._einsum_matmul(op, op2, qarg2, shift=qbit_num, right_mul=True)
 
     return np.allclose(op12, op21)
-
