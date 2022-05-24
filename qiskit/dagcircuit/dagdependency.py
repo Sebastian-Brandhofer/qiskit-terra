@@ -578,7 +578,7 @@ def _does_commute(node1, node2):
     Return:
         bool: True if the nodes commute and false if it is not the case.
     """
-    return SessionCommutationLibrary.do_gates_commute(node1, node2)
+    return SessionCommutationLibrary.do_operations_commute(node1, node2)
     """
     # Create set of qubits on which the operation acts
     qarg1 = [node1.qargs[i] for i in range(0, len(node1.qargs))]
