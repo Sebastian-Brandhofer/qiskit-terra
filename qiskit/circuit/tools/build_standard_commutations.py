@@ -1,10 +1,10 @@
 import itertools
 from functools import lru_cache
 
-from qiskit.circuit import Gate, ControlledGate
+from qiskit.circuit import Gate, ControlledGate, Parameter, ParameterVector
 from qiskit.circuit.commutation import _get_ops_in_order
 from qiskit.circuit.commutation_library import SessionCommutationLibrary
-from qiskit.circuit.library import C3SXGate, C4XGate
+from qiskit.circuit.library import C3SXGate, C4XGate, RZGate, RGate
 from qiskit.dagcircuit import DAGOpNode
 
 
@@ -68,7 +68,7 @@ def _get_commutation_dict():
 
                 if relative_placement in commute_qubit_dic:
                     assert (
-                        commute_qubit_dic[relative_placement] != is_commuting
+                        commute_qubit_dic[relative_placement] == is_commuting
                     ), "If there is already an entry, it must be equal"
                 else:
                     commute_qubit_dic[relative_placement] = is_commuting
@@ -115,6 +115,30 @@ def _dump_commuting_dict_as_python(commutations):
                 dir_str += "    },\n"
         dir_str += "}\n"
         fp.write(dir_str)
+
+
+def _get_param_gates(max_params):
+    blocked_types = [C3SXGate, C4XGate]
+
+    gates_params = [g for g in Gate.__subclasses__() if "standard_gates" in g.__module__] + [
+        g for g in ControlledGate.__subclasses__() if g not in blocked_types
+    ]
+    simple_gates = _get_simple_gates()
+    params = {i: ParameterVector("test", length=i) for i in range(1, max_params)}
+    param_gates_dict = {}
+    for g_t in gates_params:
+        if g_t in simple_gates:
+            continue
+        for i in range(1, max_params):
+            # get minimum number of params for this gate
+            try:
+                g = g_t(*params[i])
+                param_gates_dict.setdefault(i, []).append(g_t)
+                break
+            except:
+                pass
+
+    return param_gates_dict
 
 
 if __name__ == "__main__":
