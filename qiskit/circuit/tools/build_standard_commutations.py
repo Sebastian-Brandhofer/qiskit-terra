@@ -1,13 +1,11 @@
 import itertools
-import multiprocessing
 from functools import lru_cache
-from multiprocessing import Process
-from sympy import solve
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate, ControlledGate
 from qiskit.circuit.commutation import _get_ops_in_order
 from qiskit.circuit.commutation_library import SessionCommutationLibrary
 from qiskit.circuit.library import C3SXGate, C4XGate
+from qiskit.circuit.tools.symbolic_unitary_simulator import SymbolicUnitarySimulatorPy
 from qiskit.dagcircuit import DAGOpNode
 
 
@@ -52,39 +50,6 @@ def _get_symbolic_commutator(d0, d1):
     return g0g1_u - g1g0_u
 
 
-def _do_parameterized_operations_commute(d0, d1):
-    symbolic_commutator = _get_symbolic_commutator(d0, d1)
-    symbolic_commutator = symbolic_commutator.reshape(
-        symbolic_commutator.nrows() * symbolic_commutator.ncols(), 1
-    )
-    symbols = list(symbolic_commutator.free_symbols)
-    if len(symbols) == 0:
-        return all([r == 0 for r in symbols])
-    try:
-        manager = multiprocessing.Manager()
-        sympy_results = manager.list()
-
-        def symsolve(res):
-            try:
-                res.append(solve(symbolic_commutator, symbols, set=True))
-                # res.append(nonlinsolve(symbolic_commutator, symbols))
-            except Exception as e:
-                print(e)
-                res.append("unknown: {}".format(e))
-
-        proc = Process(target=symsolve, args=(sympy_results,))
-        proc.start()
-        proc.join(timeout=60 * 10)
-        proc.terminate()
-
-        if len(sympy_results) > 0:
-            return sympy_results[0]
-        else:
-            return "timeout"
-    except:
-        return "unknown"
-
-
 def _get_commutation_dict():
     """Compute the commutation relation of considered gates
 
@@ -92,7 +57,6 @@ def _get_commutation_dict():
         A dictionary that includes the commutation relation for each considered pair of operations
     """
     commuting_dict = {}
-    # considered_gates = _get_simple_gates() + _get_param_gates(4)
     considered_gates = _get_simple_gates()
     for g0_t in considered_gates:
         if g0_t in _get_simple_gates():
@@ -135,13 +99,7 @@ def _get_commutation_dict():
                 if not g0.is_parameterized() and not g1.is_parameterized():
                     is_commuting = SessionCommutationLibrary.do_operations_commute(d0, d1)
                 else:
-                    param_solve = _do_parameterized_operations_commute(d0, d1)
-                    print(
-                        "[{}, {}] @{} = {}".format(
-                            d0.op.name, d1.op.name, relative_placement, param_solve
-                        )
-                    )
-                    is_commuting = param_solve
+                    is_commuting = None
 
                 if relative_placement in commute_qubit_dic:
                     assert (
