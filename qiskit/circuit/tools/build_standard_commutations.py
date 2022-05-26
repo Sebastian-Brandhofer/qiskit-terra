@@ -108,10 +108,8 @@ def _dump_commuting_dict_as_python(commutations):
                 dir_str += '    ("{}", "{}"): {{\n'.format(*k)
 
                 for entry_key, entry_val in v.items():
-                    if len(entry_key) == 1:
-                        dir_str += "        ({},): {},\n".format(*entry_key, entry_val)
-                    else:
-                        dir_str += "        ({}, {}): {},\n".format(*entry_key, entry_val)
+                    dir_str += "        {}: {},\n".format(entry_key, entry_val)
+                 
                 dir_str += "    },\n"
         dir_str += "}\n"
         fp.write(dir_str)
