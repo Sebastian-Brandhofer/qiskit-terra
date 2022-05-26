@@ -1,10 +1,22 @@
 import itertools
+import multiprocessing
+import pickle
 from functools import lru_cache
+from multiprocessing import Process
 
+import sympy
+
+# from symengine import Symbol
+# from symengine.lib.symengine_wrapper import solve, linsolve, Zero
+from sympy import nonlinsolve
+from sympy import solve, linsolve
+
+from qiskit import QuantumCircuit
 from qiskit.circuit import Gate, ControlledGate, Parameter, ParameterVector
 from qiskit.circuit.commutation import _get_ops_in_order
 from qiskit.circuit.commutation_library import SessionCommutationLibrary
 from qiskit.circuit.library import C3SXGate, C4XGate, RZGate, RGate
+from qiskit.circuit.tools.symbolic_unitary_simulator import SymbolicUnitarySimulatorPy
 from qiskit.dagcircuit import DAGOpNode
 
 
@@ -27,9 +39,59 @@ def _get_simple_gates():
             g()
             gates.append(g)
         except:
-            print("Gate may have parameters", g)
+            # print("Gate may have parameters", g)
             continue
     return gates
+
+
+def _get_symbolic_commutator(d0, d1):
+    sus = SymbolicUnitarySimulatorPy()
+    qargs = set(d0.qargs + d1.qargs)
+
+    g0g1 = QuantumCircuit(len(qargs))
+    g0g1.append(d0.op, d0.qargs)
+    g0g1.append(d1.op, d1.qargs)
+    g0g1_u = sus.run_experiment(g0g1)
+
+    sus = SymbolicUnitarySimulatorPy()
+    g1g0 = QuantumCircuit(len(qargs))
+    g1g0.append(d1.op, d1.qargs)
+    g1g0.append(d0.op, d0.qargs)
+    g1g0_u = sus.run_experiment(g1g0)
+    return g0g1_u - g1g0_u
+
+
+def _do_parameterized_operations_commute(d0, d1):
+    symbolic_commutator = _get_symbolic_commutator(d0, d1)
+    symbolic_commutator = symbolic_commutator.reshape(
+        symbolic_commutator.nrows() * symbolic_commutator.ncols(), 1
+    )
+    symbols = list(symbolic_commutator.free_symbols)
+    if len(symbols) == 0:
+        return all([r == 0 for r in symbols])
+    try:
+        manager = multiprocessing.Manager()
+        sympy_results = manager.list()
+
+        def symsolve(res):
+            try:
+                res.append(solve(symbolic_commutator, symbols, set=True))
+                # res.append(nonlinsolve(symbolic_commutator, symbols))
+            except Exception as e:
+                print(e)
+                res.append("unknown: {}".format(e))
+
+        proc = Process(target=symsolve, args=(sympy_results,))
+        proc.start()
+        proc.join(timeout=60 * 10)
+        proc.terminate()
+
+        if len(sympy_results) > 0:
+            return sympy_results[0]
+        else:
+            return "timeout"
+    except:
+        return "unknown"
 
 
 def _get_commutation_dict():
@@ -39,11 +101,24 @@ def _get_commutation_dict():
         A dictionary that includes the commutation relation for each considered pair of operations
     """
     commuting_dict = {}
-    for g0_t in _get_simple_gates():
-        g0 = g0_t()
+    # considered_gates = _get_simple_gates() + _get_param_gates(4)
+    considered_gates = _get_simple_gates()
+    for g0_t in considered_gates:
+        if g0_t in _get_simple_gates():
+            g0 = g0_t()
+        else:
+            g0 = g0_t
         d0 = DAGOpNode(op=g0, qargs=list(range(g0.num_qubits)), cargs=[])
-        for g1_t in _get_simple_gates():
-            g1 = g1_t()
+        for g1_t in considered_gates:
+            if g1_t in _get_simple_gates():
+                g1 = g1_t()
+            else:
+                g1 = g1_t
+
+            # only consider canonical entries
+            if _get_ops_in_order(g0, g1) != (g0, g1):
+                continue
+
             # all possible combinations of overlap between g1 and g0 qubits (-1 otherwise we needlessly consider completely disjunct cases)
             combinations = itertools.permutations(
                 range(g0.num_qubits + g1.num_qubits - 1), g0.num_qubits
@@ -63,8 +138,19 @@ def _get_commutation_dict():
                         idx_non_overlapping_qubits += 1
 
                 d1 = DAGOpNode(op=g1, qargs=g1_qargs, cargs=[])
-                is_commuting = SessionCommutationLibrary.do_operations_commute(d0, d1)
+
                 relative_placement = tuple([i if i < g1.num_qubits else None for i in permutation])
+
+                if not g0.is_parameterized() and not g1.is_parameterized():
+                    is_commuting = SessionCommutationLibrary.do_operations_commute(d0, d1)
+                else:
+                    param_solve = _do_parameterized_operations_commute(d0, d1)
+                    print(
+                        "[{}, {}] @{} = {}".format(
+                            d0.op.name, d1.op.name, relative_placement, param_solve
+                        )
+                    )
+                    is_commuting = param_solve
 
                 if relative_placement in commute_qubit_dic:
                     assert (
@@ -72,6 +158,7 @@ def _get_commutation_dict():
                     ), "If there is already an entry, it must be equal"
                 else:
                     commute_qubit_dic[relative_placement] = is_commuting
+
             commuting_dict[g0.name, g1.name] = commute_qubit_dic
     return commuting_dict
 
@@ -85,11 +172,11 @@ def _simplify_commuting_dict(commuting_dict):
     """
     # Set bool if commutation is independent of relative placement
     for ops in commuting_dict.keys():
-        vals = set(commuting_dict[ops].values())
-        if len(vals) == 1:
-            commuting_dict[ops] = next(iter(vals))
-    # Prune away non-canon keys before returning
-    return {k: commuting_dict[k] for k in commuting_dict.keys() if k == _get_ops_in_order(*k)}
+        gates_commutations = set(commuting_dict[ops].values())
+        if len(gates_commutations) == 1:
+            commuting_dict[ops] = next(iter(gates_commutations))
+
+    return commuting_dict
 
 
 def _dump_commuting_dict_as_python(commutations):
@@ -99,7 +186,7 @@ def _dump_commuting_dict_as_python(commutations):
         commutations (dict): a dictionary that includes the commutation relation for each considered pair of operations
 
     """
-    with open("../standard_gates_commutations.py", "w") as fp:
+    with open("../_standard_gates_commutations.py", "w") as fp:
         dir_str = "standard_gates_commutations = {\n"
         for k, v in commutations.items():
             if isinstance(v, bool):
@@ -108,37 +195,37 @@ def _dump_commuting_dict_as_python(commutations):
                 dir_str += '    ("{}", "{}"): {{\n'.format(*k)
 
                 for entry_key, entry_val in v.items():
-                    if len(entry_key) == 1:
-                        dir_str += "        ({},): {},\n".format(*entry_key, entry_val)
-                    else:
-                        dir_str += "        ({}, {}): {},\n".format(*entry_key, entry_val)
+                    dir_str += "        {}: {},\n".format(entry_key, entry_val)
+
                 dir_str += "    },\n"
         dir_str += "}\n"
         fp.write(dir_str)
 
 
-def _get_param_gates(max_params):
+def _get_param_gates(max_params: int) -> list:
     blocked_types = [C3SXGate, C4XGate]
 
     gates_params = [g for g in Gate.__subclasses__() if "standard_gates" in g.__module__] + [
         g for g in ControlledGate.__subclasses__() if g not in blocked_types
     ]
     simple_gates = _get_simple_gates()
-    params = {i: ParameterVector("test", length=i) for i in range(1, max_params)}
-    param_gates_dict = {}
+
+    param_gates = []
+    gidx = 0
     for g_t in gates_params:
         if g_t in simple_gates:
             continue
         for i in range(1, max_params):
             # get minimum number of params for this gate
             try:
-                g = g_t(*params[i])
-                param_gates_dict.setdefault(i, []).append(g_t)
+                g = g_t(*ParameterVector("test_{}".format(gidx), length=i))
+                param_gates.append(g)
                 break
             except:
                 pass
+        gidx += 1
 
-    return param_gates_dict
+    return param_gates
 
 
 if __name__ == "__main__":

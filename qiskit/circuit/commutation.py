@@ -4,12 +4,13 @@ import pickle
 from typing import Union
 import numpy as np
 
+from qiskit.circuit import Instruction
 from qiskit.circuit.exceptions import CircuitError
 from qiskit.quantum_info import Operator
 from qiskit.dagcircuit import DAGOpNode, DAGDepNode
 
 try:
-    from qiskit.circuit.standard_gates_commutations import standard_gates_commutations
+    from qiskit.circuit._standard_gates_commutations import standard_gates_commutations
 
     StandardGateCommutations = standard_gates_commutations
 except:
@@ -32,16 +33,25 @@ def _get_relative_placement(gate0: DAGOpNode, gate1: DAGOpNode) -> tuple:
     return tuple(qubits_g1.get(q, None) for i, q in enumerate(gate0.qargs))
 
 
-def _get_ops_in_order(op0: Union[DAGOpNode, str], op1: [DAGOpNode, str]):
-    if not isinstance(op0, str) and not isinstance(op1, str):
-        return (op0, op1) if hash(op0.op.name) < hash(op1.op.name) else (op1, op0)
-
-    if isinstance(op0, str) and isinstance(op1, str):
-        return (op0, op1) if hash(op0) < hash(op1) else (op1, op0)
-
-    op0str = op0 if isinstance(op0, str) else op0.op.name
-    op1str = op1 if isinstance(op1, str) else op1.op.name
-    return (op0str, op1str) if hash(op0str) < hash(op1str) else (op1str, op0str)
+def _get_ops_in_order(op0: Union[DAGOpNode, Instruction], op1: [DAGOpNode, Instruction]):
+    if not isinstance(op0, Instruction) and not isinstance(op1, Instruction):
+        least_qubits_op, most_qubits_op = (
+            (op0, op1) if len(op0.qargs) < len(op1.qargs) else (op1, op0)
+        )
+        # prefer operation with least num_qubits as first key
+        if len(op0.qargs) != len(op1.qargs):
+            return least_qubits_op, most_qubits_op
+        else:
+            return (op0, op1) if hash(op0.op.name) < hash(op1.op.name) else (op1, op0)
+    else:
+        least_qubits_op, most_qubits_op = (
+            (op0, op1) if op0.num_qubits < op1.num_qubits else (op1, op0)
+        )
+        # prefer operation with least num_qubits as first key
+        if op0.num_qubits != op1.num_qubits:
+            return least_qubits_op, most_qubits_op
+        else:
+            return (op0, op1) if hash(op0.name) < hash(op1.name) else (op1.name, op0.name)
 
 
 def _look_up_commutation_dict(
