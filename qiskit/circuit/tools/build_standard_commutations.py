@@ -1,22 +1,13 @@
 import itertools
 import multiprocessing
-import pickle
 from functools import lru_cache
 from multiprocessing import Process
-
-import sympy
-
-# from symengine import Symbol
-# from symengine.lib.symengine_wrapper import solve, linsolve, Zero
-from sympy import nonlinsolve
-from sympy import solve, linsolve
-
+from sympy import solve
 from qiskit import QuantumCircuit
-from qiskit.circuit import Gate, ControlledGate, Parameter, ParameterVector
+from qiskit.circuit import Gate, ControlledGate
 from qiskit.circuit.commutation import _get_ops_in_order
 from qiskit.circuit.commutation_library import SessionCommutationLibrary
-from qiskit.circuit.library import C3SXGate, C4XGate, RZGate, RGate
-from qiskit.circuit.tools.symbolic_unitary_simulator import SymbolicUnitarySimulatorPy
+from qiskit.circuit.library import C3SXGate, C4XGate
 from qiskit.dagcircuit import DAGOpNode
 
 
@@ -200,32 +191,6 @@ def _dump_commuting_dict_as_python(commutations):
                 dir_str += "    },\n"
         dir_str += "}\n"
         fp.write(dir_str)
-
-
-def _get_param_gates(max_params: int) -> list:
-    blocked_types = [C3SXGate, C4XGate]
-
-    gates_params = [g for g in Gate.__subclasses__() if "standard_gates" in g.__module__] + [
-        g for g in ControlledGate.__subclasses__() if g not in blocked_types
-    ]
-    simple_gates = _get_simple_gates()
-
-    param_gates = []
-    gidx = 0
-    for g_t in gates_params:
-        if g_t in simple_gates:
-            continue
-        for i in range(1, max_params):
-            # get minimum number of params for this gate
-            try:
-                g = g_t(*ParameterVector("test_{}".format(gidx), length=i))
-                param_gates.append(g)
-                break
-            except:
-                pass
-        gidx += 1
-
-    return param_gates
 
 
 if __name__ == "__main__":
