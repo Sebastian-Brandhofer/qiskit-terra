@@ -12,14 +12,22 @@
 
 
 """Commutation analysis and transformation pass testing"""
-
+import math
 import unittest
+from itertools import permutations, product
+
+import numpy as np
 
 from qiskit.circuit import QuantumRegister, QuantumCircuit, Qubit
+from qiskit.circuit.library import CHGate, CZGate, RZGate, RGate
+from qiskit.dagcircuit import DAGOpNode
+from qiskit.dagcircuit.dagdependency import _does_commute
+from qiskit.quantum_info import Operator
 from qiskit.transpiler import PropertySet
 from qiskit.transpiler.passes import CommutationAnalysis
 from qiskit.converters import circuit_to_dag
 from qiskit.test import QiskitTestCase
+from qiskit.transpiler.passes.optimization.commutation_analysis import _commute
 
 
 class TestCommutationAnalysis(QiskitTestCase):
@@ -89,6 +97,55 @@ class TestCommutationAnalysis(QiskitTestCase):
             qr[1]: [[2], [13], [14], [15], [3]],
         }
         self.assertCommutationSet(self.pset["commutation_set"], expected)
+
+    def test_all_overlaps_ch_cz(self):
+        """Generate all combinations of two two-qubit gates and test if commutation is correct
+
+        """
+        qubit_assignments = list(permutations(range(4), 2))
+        for overlaps in product(qubit_assignments, qubit_assignments):
+            qc = QuantumCircuit(4)
+            qc.ch(*overlaps[0])
+            qc.cz(*overlaps[1])
+
+            qc2 = QuantumCircuit(4)
+            qc2.cz(*overlaps[1])
+            qc2.ch(*overlaps[0])
+
+            commutes_matmul = np.allclose(Operator(qc).data, Operator(qc2).data)
+            commute0 = _does_commute(DAGOpNode(CHGate(),[qc.qubits[q] for q in overlaps[0]]),DAGOpNode(CZGate(),[qc.qubits[q] for q in overlaps[1]]))
+            commute1 = _does_commute(DAGOpNode(CZGate(),[qc.qubits[q] for q in overlaps[1]]),DAGOpNode(CHGate(),[qc.qubits[q] for q in overlaps[0]]))
+            self.assertEqual(commutes_matmul, commute0)
+            self.assertEqual(commutes_matmul, commute1)
+
+    def test_gate_parameters(self):
+        """Choose two single-qubit gates and try many parameter points
+
+        """
+        data_points = 5
+        pispace = np.linspace(0, 2 * np.pi, data_points)
+        paramspace = list(product(product(pispace, pispace), pispace))
+        for params in paramspace:
+            p2 = params[-1]
+            p1 = params[0][-1]
+            p0 = params[0][0]
+
+            qc = QuantumCircuit(1)
+            qc.rz(p0, 0)
+            qc.r(p1, p2, 0)
+
+            qc2 = QuantumCircuit(1)
+            qc2.r(p1, p2, 0)
+            qc2.rz(p0, 0)
+
+            commutes_matmul = np.allclose(Operator(qc).data, Operator(qc2).data)
+
+            commute0 = _does_commute(DAGOpNode(RZGate(p0), [qc.qubits[0]]),
+                                     DAGOpNode(RGate(p1, p2), [qc.qubits[0]]))
+            commute1 = _does_commute(DAGOpNode(RGate(p1, p2), [qc.qubits[0]]),
+                                     DAGOpNode(RZGate(p0), [qc.qubits[0]]))
+            self.assertEqual(commutes_matmul, commute1)
+            self.assertEqual(commutes_matmul, commute0)
 
     def test_non_commutative_circuit(self):
         """A simple circuit where no gates commute

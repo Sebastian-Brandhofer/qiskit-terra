@@ -14,6 +14,8 @@
 
 from collections import defaultdict
 import numpy as np
+
+from qiskit.dagcircuit.dagdependency import _does_commute
 from qiskit.transpiler.exceptions import TranspilerError
 from qiskit.transpiler.basepasses import AnalysisPass
 from qiskit.quantum_info.operators import Operator
@@ -115,6 +117,8 @@ def _hashable_parameters(params):
 
 
 def _commute(node1, node2, cache):
+    return _does_commute(node1, node2, only_cache=False, only_std_gates=False, only_matmul=False)
+    """
     if not isinstance(node1, DAGOpNode) or not isinstance(node2, DAGOpNode):
         return False
     for nd in [node1, node2]:
@@ -171,3 +175,4 @@ def _commute(node1, node2, cache):
         op21 = operator_1.compose(operator_2, qargs=qarg2, front=True)
     cache[node1_key, node2_key] = cache[node2_key, node1_key] = ret = op12 == op21
     return ret
+    """

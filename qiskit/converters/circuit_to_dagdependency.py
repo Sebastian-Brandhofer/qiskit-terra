@@ -15,7 +15,7 @@
 from qiskit.dagcircuit.dagdependency import DAGDependency
 
 
-def circuit_to_dagdependency(circuit):
+def circuit_to_dagdependency(circuit, only_cache, only_std_gates, only_matmul):
     """Build a ``DAGDependency`` object from a ``QuantumCircuit``.
 
     Args:
@@ -24,7 +24,7 @@ def circuit_to_dagdependency(circuit):
     Return:
         DAGDependency: the DAG representing the input circuit as a dag dependency.
     """
-    dagdependency = DAGDependency()
+    dagdependency = DAGDependency(only_cache, only_std_gates, only_matmul)
     dagdependency.name = circuit.name
     dagdependency.metadata = circuit.metadata
 

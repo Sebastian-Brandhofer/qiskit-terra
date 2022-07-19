@@ -67,10 +67,13 @@ class DAGDependency:
 
     """
 
-    def __init__(self):
+    def __init__(self, only_cache, only_std_gates, only_matmul):
         """
         Create an empty DAGDependency.
         """
+        self.only_cache = only_cache
+        self.only_matmul = only_matmul
+        self.only_std_gates = only_std_gates
         # Circuit name
         self.name = None
 
@@ -489,7 +492,7 @@ class DAGDependency:
         # Check the commutation relation with reachable node, it adds edges if it does not commute
         for prev_node_id in range(max_node_id - 1, -1, -1):
             if self._multi_graph.get_node_data(prev_node_id).reachable and not _does_commute(
-                self._multi_graph.get_node_data(prev_node_id), max_node
+                self._multi_graph.get_node_data(prev_node_id), max_node, self.only_cache, self.only_std_gates, self.only_matmul
             ):
                 self._multi_graph.add_edge(prev_node_id, max_node_id, {"commute": False})
                 self._list_pred(max_node_id)
@@ -568,7 +571,7 @@ def merge_no_duplicates(*iterables):
             yield val
 
 
-def _does_commute(node1, node2):
+def _does_commute(node1, node2, only_cache=False, only_std_gates=False, only_matmul=False):
     """Function to verify commutation relation between two nodes in the DAG.
 
     Args:
@@ -578,7 +581,7 @@ def _does_commute(node1, node2):
     Return:
         bool: True if the nodes commute and false if it is not the case.
     """
-    return SessionCommutationLibrary.do_operations_commute(node1, node2)
+    return SessionCommutationLibrary.do_operations_commute(node1, node2, only_cache=only_cache, only_std_gates=only_std_gates, only_matmul=only_matmul)
     """
     # Create set of qubits on which the operation acts
     qarg1 = [node1.qargs[i] for i in range(0, len(node1.qargs))]
