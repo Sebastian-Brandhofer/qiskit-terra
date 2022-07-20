@@ -6,6 +6,8 @@ from typing import List
 
 import sympy
 from sympy import solve, zoo, lambdify, solveset, pprint, nonlinsolve, trigsimp
+from sympy.core import symbol
+
 from qiskit import QuantumCircuit
 from qiskit.circuit import Gate, ControlledGate, ParameterVector, Parameter
 from qiskit.circuit.library import C3SXGate, C4XGate
@@ -16,6 +18,11 @@ from qiskit.dagcircuit import DAGOpNode
 
 
 def _handle_corner_case(entry):
+    """Handles cases where the sympy expression does not constitute a valid lambda function, e.g. when the sympy
+       solution contains infinity
+    Args:
+         A sympy expression
+    """
     if isinstance(entry, str):
         return True, None
 
@@ -36,6 +43,10 @@ def _handle_corner_case(entry):
 
 
 def _sympy_expressions_string(sympy_expr, precision=6):
+    """Cleans up sympy expression string for a later lambda function definition.
+    Args:
+        sympy_expr: The sympy expressions to be cleaned up
+    """
     simplified_expr = set()
     for expr_tuple in sympy_expr:
         curated_expr = []
@@ -54,7 +65,14 @@ def _sympy_expressions_string(sympy_expr, precision=6):
     return simplified_expr
 
 
-def _construct_lambda_function_string(params, sympy_expr):
+def _construct_lambda_function_string(params, sympy_expr) -> str:
+    """Write sympy expressions that indicate commutation conditions as python lambda functions.
+    Args:
+        params: parameters used in the symbolic expressions
+        sympy_expr: expressions indicating parameter sets that lead to commuting operations
+    Return:
+         String representing a Lambda definition that computes parameters for which operations commute.
+    """
     sympy_expressions = _sympy_expressions_string(sympy_expr)
     lambda_definition = (
         "lambda "
@@ -67,11 +85,16 @@ def _construct_lambda_function_string(params, sympy_expr):
 
 
 def _postprocess_sympy_param_equations(entry):
+    """Transform sympy expressions to python lambda definitions.
+    Args:
+        entry: a set of sympy expressions
+    Return:
+        A tuple that defines the parameters used in the lambda function and lambda function definition as a string
+        """
     if isinstance(entry, bool):
         return entry
 
     is_corner_case, result = _handle_corner_case(entry)
-    #is_corner_case, result = False, None
     if is_corner_case:
         return result
     else:
@@ -101,7 +124,7 @@ def _get_symbolic_commutator(d0: DAGOpNode, d1: DAGOpNode):
         d0 (DAGOpNode): first operation in the considered pairs of operations
         d1 (DAGOpNode): second operation in the considered pairs of operations
     Return:
-        The symbolic commutator of the input operations
+        The symbolic commutator of the input operations.
     """
     qargs = set(d0.qargs + d1.qargs)
     param_offset = 0
