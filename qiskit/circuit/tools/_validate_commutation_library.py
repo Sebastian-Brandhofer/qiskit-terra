@@ -4,9 +4,10 @@ import pickle
 from typing import List
 
 from qiskit.circuit import Gate, ControlledGate, ParameterVector
-from qiskit.circuit.commutation import _order_operations, _commute
+from qiskit.circuit.commutation import _order_operations, _commute, StandardGateCommutations
 from qiskit.circuit.library import C3SXGate, C4XGate
-from qiskit.circuit.tools.build_standard_commutations import _get_unparameterizable_gates
+from qiskit.circuit.tools.build_standard_commutations import _get_unparameterizable_gates, \
+    _dump_commuting_dict_as_python
 from qiskit.dagcircuit import DAGOpNode
 from qiskit.dagcircuit.dagdependency import _does_commute
 import numpy as np
@@ -71,90 +72,107 @@ def get_param_space(num_params, data_points=5):
     return itertools.product(*[pispace] * num_params)
 
 
-params = {i+1: list(get_param_space(i+1, data_points=8)) for i in range(6)}
-params[0] = []
-param_dict = _get_param_gates(4, exclude_gates=_get_unparameterizable_gates())
-considered_gates = _get_unparameterizable_gates() + [g for gs in param_dict.values() for g in gs]
-validated_gates_lib = {}
-param_dict = {k: [g.name for g in gs] for k, gs in param_dict.items()}
-print("Going through library")
-for g0_t in considered_gates:
-    if g0_t in _get_unparameterizable_gates():
-        g0 = g0_t()
-    else:
-        g0 = g0_t
-    d0 = DAGOpNode(op=g0, qargs=list(range(g0.num_qubits)), cargs=[])
-    for g1_t in considered_gates:
-        if g1_t in _get_unparameterizable_gates():
-            g1 = g1_t()
+def _prune_incorrect_commutations(commutations, valid):
+    for k, v in commutations.items():
+        for k0, v0 in v.items():
+            if valid[k][k0] == "incorrect":
+                v[k0] = None
+    return commutations
+
+
+def _validated_commutations():
+    params = {i+1: list(get_param_space(i+1, data_points=10)) for i in range(6)}
+    params[0] = []
+    param_dict = _get_param_gates(4, exclude_gates=_get_unparameterizable_gates())
+    considered_gates = _get_unparameterizable_gates() + [g for gs in param_dict.values() for g in gs]
+    validated_gates_lib = {}
+    param_dict = {k: [g.name for g in gs] for k, gs in param_dict.items()}
+    print("Going through library")
+    for g0_t in considered_gates:
+        if g0_t in _get_unparameterizable_gates():
+            g0 = g0_t()
         else:
-            g1 = copy.deepcopy(g1_t)
+            g0 = g0_t
+        d0 = DAGOpNode(op=g0, qargs=list(range(g0.num_qubits)), cargs=[])
+        for g1_t in considered_gates:
+            if g1_t in _get_unparameterizable_gates():
+                g1 = g1_t()
+            else:
+                g1 = copy.deepcopy(g1_t)
 
-        # only consider canonical entries
-        if _order_operations(g0, g1) != (g0, g1) and g0.name != g1.name:
-            continue
+            # only consider canonical entries
+            if _order_operations(g0, g1) != (g0, g1) and g0.name != g1.name:
+                continue
 
-        # all possible combinations of overlap between g1 and g0 qubits (-1 otherwise we needlessly consider completely disjunct cases)
-        combinations = itertools.permutations(
-            range(g0.num_qubits + g1.num_qubits - 1), g0.num_qubits
-        )
-        commute_qubit_dic = {}
-        for permutation in combinations:
-            permutation_list = list(permutation)
-            g1_qargs = []
+            # all possible combinations of overlap between g1 and g0 qubits (-1 otherwise we needlessly consider completely disjunct cases)
+            combinations = itertools.permutations(
+                range(g0.num_qubits + g1.num_qubits - 1), g0.num_qubits
+            )
+            commute_qubit_dic = {}
+            for permutation in combinations:
+                permutation_list = list(permutation)
+                g1_qargs = []
 
-            # use idx_non_overlapping qubits to represent qubits on g1 that are not connected to g0
-            idx_non_overlapping_qubits = g0.num_qubits
-            for i in range(g1.num_qubits):
-                if i in permutation_list:
-                    g1_qargs.append(permutation_list.index(i))
-                else:
-                    g1_qargs.append(idx_non_overlapping_qubits)
-                    idx_non_overlapping_qubits += 1
+                # use idx_non_overlapping qubits to represent qubits on g1 that are not connected to g0
+                idx_non_overlapping_qubits = g0.num_qubits
+                for i in range(g1.num_qubits):
+                    if i in permutation_list:
+                        g1_qargs.append(permutation_list.index(i))
+                    else:
+                        g1_qargs.append(idx_non_overlapping_qubits)
+                        idx_non_overlapping_qubits += 1
 
-            d1 = DAGOpNode(op=g1, qargs=g1_qargs, cargs=[])
+                d1 = DAGOpNode(op=g1, qargs=g1_qargs, cargs=[])
 
-            relative_placement = tuple([i if i < g1.num_qubits else None for i in permutation])
+                relative_placement = tuple([i if i < g1.num_qubits else None for i in permutation])
 
-            if "u3" in g0.name or "u3" in g1.name:
-                validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[relative_placement] = "incorrect"
-
-            g0_num_params = get_num_params(d0.op, param_dict)
-            g1_num_params = get_num_params(d1.op, param_dict)
-            #print(g0.name)
-            #print(g1.name)
-            #print()
-            #print(g0_num_params)
-            #print(g1_num_params)
-            #print()
-            correct = True
-            for param in params[g0_num_params + g1_num_params]:
-
-                pr = list(param)
-                #print(pr)
-                d0.op.params = pr[:g0_num_params]
-                d1.op.params = pr[g0_num_params: g0_num_params + g1_num_params]
-                commutes_matmul = _commute(d0, d1)
-                commutes_lib = _does_commute(d0, d1)
-                if commutes_lib != commutes_matmul:
+                if "u3" in g0.name or "u3" in g1.name:
                     validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[relative_placement] = "incorrect"
-                    #print(
-                    #    f"bug @[{d0.op.name},{d1.op.name}][{relative_placement}] mmul={commutes_matmul} lib={commutes_lib} with params: {pr}")
-                    correct = False
-                #else:
-            if correct:
-                #print(f"correct @[{d0.op.name},{d1.op.name}][{relative_placement}]")
-                validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[
-                    relative_placement] = "correct"
 
-pickle.dump(validated_gates_lib, open("validated.p", "wb"))
+                g0_num_params = get_num_params(d0.op, param_dict)
+                g1_num_params = get_num_params(d1.op, param_dict)
+                #print(g0.name)
+                #print(g1.name)
+                #print()
+                #print(g0_num_params)
+                #print(g1_num_params)
+                #print()
+                correct = True
+                for param in params[g0_num_params + g1_num_params]:
 
-cnt = 0
-crct = 0
-for v in validated_gates_lib.values():
-    for v0 in v.values():
-        cnt += 1
-        if v0 == "correct":
-            crct += 1
+                    pr = list(param)
+                    #print(pr)
+                    d0.op.params = pr[:g0_num_params]
+                    d1.op.params = pr[g0_num_params: g0_num_params + g1_num_params]
+                    commutes_matmul = _commute(d0, d1)
+                    commutes_lib = _does_commute(d0, d1)
+                    if commutes_lib != commutes_matmul:
+                        validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[relative_placement] = "incorrect"
+                        print(
+                            f"bug @[{d0.op.name},{d1.op.name}][{relative_placement}] mmul={commutes_matmul} lib={commutes_lib} with params: {pr}")
+                        correct = False
+                    #else:
+                if correct:
+                    #print(f"correct @[{d0.op.name},{d1.op.name}][{relative_placement}]")
+                    validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[
+                        relative_placement] = "correct"
+    """
+    # Stats
+    cnt = 0
+    crct = 0
+    for v in validated_gates_lib.values():
+        for v0 in v.values():
+            cnt += 1
+            if v0 == "correct":
+                crct += 1
 
-print(f"Went through {cnt} commutation entries out of which {crct} where correct")
+    print(f"Went through {cnt} commutation entries out of which {crct} where correct")
+    """
+    return validated_gates_lib
+
+
+if __name__ == "__main__":
+    sgc = _prune_incorrect_commutations(StandardGateCommutations,
+                              valid=pickle.load(
+                                  open("/Users/sebastianbrandhofer/gh/qiskit-terra/qiskit/circuit/validated.p", "rb")))
+    _dump_commuting_dict_as_python(sgc, "../_standard_gates_commutations_pruned.py")

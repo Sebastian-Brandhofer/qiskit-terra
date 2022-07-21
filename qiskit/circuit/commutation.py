@@ -15,6 +15,7 @@ from qiskit.dagcircuit import DAGOpNode
 try:
     from qiskit.circuit._standard_gates_commutations import standard_gates_commutations
     StandardGateCommutations = standard_gates_commutations
+
 except:
     print("Did not find StandardGateCommutations library!")
     StandardGateCommutations = {}

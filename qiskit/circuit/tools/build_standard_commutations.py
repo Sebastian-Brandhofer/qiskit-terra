@@ -1,4 +1,5 @@
 import copy
+import inspect
 import itertools
 import pickle
 from functools import lru_cache
@@ -11,7 +12,7 @@ from qiskit.circuit.library import C3SXGate, C4XGate
 from qiskit.circuit.tools.param_commutations import (
     _do_parameterized_operations_commute,
     _get_param_gates,
-    _postprocess_sympy_param_equations,
+    _postprocess_sympy_param_equations, _construct_lambda_function_string,
 )
 from qiskit.dagcircuit import DAGOpNode
 
@@ -136,14 +137,14 @@ def _simplify_commuting_dict(commuting_dict):
     return commuting_dict
 
 
-def _dump_commuting_dict_as_python(commutations: dict):
+def _dump_commuting_dict_as_python(commutations: dict, fn: str = "../_standard_gates_commutations.py"):
     """Write commutation dictionary as python object to ./qiskit/circuit/_standard_gates_commutations.py.
 
     Args:
         commutations (dict): a dictionary that includes the commutation relation for each considered pair of operations
 
     """
-    with open("../_standard_gates_commutations.py", "w") as fp:
+    with open(fn, "w") as fp:
         dir_str = "from numpy import *\n\n"
         dir_str += "standard_gates_commutations = {\n"
         for k, v in commutations.items():
@@ -153,7 +154,11 @@ def _dump_commuting_dict_as_python(commutations: dict):
                 dir_str += '    ("{}", "{}"): {{\n'.format(*k)
 
                 for entry_key, entry_val in v.items():
-                    dir_str += "        {}: {},\n".format(entry_key, entry_val)
+                    # for redumping the commutations dict
+                    if isinstance(entry_val, tuple) and callable(entry_val[1]) and entry_val[1].__name__ == "<lambda>":
+                        dir_str += inspect.getsource(entry_val[1])
+                    else:
+                        dir_str += "        {}: {},\n".format(entry_key, entry_val)
 
                 dir_str += "    },\n"
         dir_str += "}\n"
@@ -165,4 +170,5 @@ if __name__ == "__main__":
     commutation_dict = _generate_commutation_dict()
     pickle.dump(commutation_dict, open(dirpath, "wb"))
     _dump_commuting_dict_as_python(commutation_dict)
-    print("Done!")
+    # You may want to run _validated_commutation_library to make sure commutation_dict only contains correct entries
+    # sympy does not always report all solutions
