@@ -5,10 +5,10 @@ import pickle
 from functools import lru_cache
 from typing import List
 
-from qiskit.circuit import Gate, ControlledGate
+from qiskit.circuit import Gate, ControlledGate, Parameter
 from qiskit.circuit.commutation import _order_operations
 from qiskit.circuit.commutation_library import SessionCommutationLibrary
-from qiskit.circuit.library import C3SXGate, C4XGate
+from qiskit.circuit.library import C3SXGate, C4XGate, TGate, RGate
 from qiskit.circuit.tools.param_commutations import (
     _do_parameterized_operations_commute,
     _get_param_gates,
@@ -167,8 +167,9 @@ def _dump_commuting_dict_as_python(commutations: dict, fn: str = "../_standard_g
 
 if __name__ == "__main__":
     dirpath = "/Users/sebastianbrandhofer/gh/qiskit-terra/qiskit/circuit/tools/param_commutation_dict_mod4pi.p"
-    commutation_dict = _generate_commutation_dict()
-    pickle.dump(commutation_dict, open(dirpath, "wb"))
-    _dump_commuting_dict_as_python(commutation_dict)
+    cons_gates = [TGate, RGate(Parameter("p_0"), Parameter("p_1"))]
+    commutation_dict = _generate_commutation_dict(considered_gates=cons_gates)
+    #pickle.dump(commutation_dict, open(dirpath, "wb"))
+    #_dump_commuting_dict_as_python(commutation_dict)
     # You may want to run _validated_commutation_library to make sure commutation_dict only contains correct entries
     # sympy does not always report all solutions

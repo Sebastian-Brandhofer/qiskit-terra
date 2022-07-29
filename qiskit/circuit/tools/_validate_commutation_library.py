@@ -68,20 +68,23 @@ def get_param_space(num_params, data_points=5):
     Return:
         A set of parameters that should be evaluated for a pair of gates
     """
-    pispace = np.linspace(0, 2*np.pi, data_points)
+    pispace = np.linspace(0, 4*np.pi, data_points)
     return itertools.product(*[pispace] * num_params)
 
 
 def _prune_incorrect_commutations(commutations, valid):
     for k, v in commutations.items():
         for k0, v0 in v.items():
-            if valid[k][k0] == "incorrect":
-                v[k0] = None
+
+            if k in valid and k0 in valid[k]:
+            #print(f"k={k} v={v} k0={k0} v0={v0}")
+                if valid[k][k0] == "incorrect":
+                    v[k0] = None
     return commutations
 
 
 def _validated_commutations():
-    params = {i+1: list(get_param_space(i+1, data_points=10)) for i in range(6)}
+    params = {i+1: list(get_param_space(i+1, data_points=13)) for i in range(6)}
     params[0] = []
     param_dict = _get_param_gates(4, exclude_gates=_get_unparameterizable_gates())
     considered_gates = _get_unparameterizable_gates() + [g for gs in param_dict.values() for g in gs]
@@ -128,6 +131,7 @@ def _validated_commutations():
 
                 if "u3" in g0.name or "u3" in g1.name:
                     validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[relative_placement] = "incorrect"
+                    break
 
                 g0_num_params = get_num_params(d0.op, param_dict)
                 g1_num_params = get_num_params(d1.op, param_dict)
@@ -151,12 +155,12 @@ def _validated_commutations():
                         print(
                             f"bug @[{d0.op.name},{d1.op.name}][{relative_placement}] mmul={commutes_matmul} lib={commutes_lib} with params: {pr}")
                         correct = False
+                        break
                     #else:
                 if correct:
                     #print(f"correct @[{d0.op.name},{d1.op.name}][{relative_placement}]")
                     validated_gates_lib.setdefault((d0.op.name, d1.op.name), {})[
                         relative_placement] = "correct"
-    """
     # Stats
     cnt = 0
     crct = 0
@@ -167,12 +171,13 @@ def _validated_commutations():
                 crct += 1
 
     print(f"Went through {cnt} commutation entries out of which {crct} where correct")
-    """
     return validated_gates_lib
 
 
 if __name__ == "__main__":
-    sgc = _prune_incorrect_commutations(StandardGateCommutations,
-                              valid=pickle.load(
-                                  open("/Users/sebastianbrandhofer/gh/qiskit-terra/qiskit/circuit/validated.p", "rb")))
+    valid_dic = _validated_commutations()
+    #pickle.dump(valid_dic, open("valid2.p", "wb"))
+    valid_dic = pickle.load(open("valid2.p", "rb"))
+    sgc = _prune_incorrect_commutations(StandardGateCommutations, valid=valid_dic)
     _dump_commuting_dict_as_python(sgc, "../_standard_gates_commutations_pruned.py")
+
